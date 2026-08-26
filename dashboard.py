@@ -17,6 +17,7 @@ import boto3
 
 from blocklist_utils import parse_description
 from config import AWS_REGION
+from timezone_utils import utc_str_to_ist, utc_dt_to_ist
 
 TARGET_SG_NAME = "target-sg"
 
@@ -26,7 +27,10 @@ def load_last_n_alerts(alerts_file, n=5):
         return []
     with open(alerts_file, "r") as f:
         lines = [line for line in f if line.strip()]
-    return [json.loads(line) for line in lines[-n:]]
+    alerts = [json.loads(line) for line in lines[-n:]]
+    for a in alerts:
+        a["timestamp"] = utc_str_to_ist(a["timestamp"])
+    return alerts
 
 
 def load_active_blocks():
@@ -57,7 +61,7 @@ def load_active_blocks():
                 if parsed["expiry"] > now:
                     active.append({
                         "ip": ip_range["CidrIp"],
-                        "expiry": parsed["expiry"].strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        "expiry": utc_dt_to_ist(parsed["expiry"]),
                         "reason": parsed["reason"],
                     })
 

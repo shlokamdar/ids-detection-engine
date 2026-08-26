@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from flask import Flask
 
 from dashboard import load_last_n_alerts, load_active_blocks
+from timezone_utils import utc_dt_to_ist
 
 app = Flask(__name__)
 
@@ -131,7 +132,7 @@ def index():
         with open(BASELINE_FILE, "r") as f:
             baseline = json.load(f)
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    generated_at = utc_dt_to_ist(datetime.now(timezone.utc))
     return render_dashboard_html(alerts, blocks, baseline, generated_at)
 
 
