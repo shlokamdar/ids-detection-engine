@@ -25,9 +25,11 @@ from aggregator import aggregate_all_windows
 from detection_engine import rule_detect, zscore_detect, ZSCORE_FEATURES
 from state_manager import load_state, save_state, should_alert, record_alert
 from dashboard import print_dashboard
+from responder import invoke_add_block
 
 BASELINE_FILE = "baseline_profile.json"
 ALERTS_FILE = "alerts.jsonl"
+DECISION_LOG_FILE = "decision_log.jsonl"
 
 # Fetch slightly more than the 60s cron interval so a delayed cron tick
 # (or a slow CloudWatch write) doesn't silently drop a window. Any
@@ -106,6 +108,24 @@ def run_cycle():
                 "features": {k: fv.get(k) for k in ZSCORE_FEATURES},
             })
 
+        # Phase 7: record the RAW detection outcome for EVERY window we
+        # looked at — including quiet ones with no alert — so a proper
+        # confusion matrix (including True Negatives) can be calculated
+        # later. Dedup (below) exists purely to reduce operator alert
+        # fatigue on the live dashboard; it isn't a detection failure, so
+        # metrics are calculated on this raw signal, not the deduped one.
+        rule_types_fired = [a["alert_type"] for a in candidate_alerts if a["triggering_method"] == "RULE"]
+        with open(DECISION_LOG_FILE, "a") as f:
+            f.write(json.dumps({
+                "window_start": event_ts,
+                "timestamp": ts_str,
+                "src_ip": src_ip,
+                "rule_alert_types": rule_types_fired,
+                "is_anomaly": is_anomaly,
+                "max_z": round(max_z, 3),
+                "detected": bool(candidate_alerts),
+            }) + "\n")
+
         if not candidate_alerts:
             continue
 
@@ -116,6 +136,12 @@ def run_cycle():
         if should_alert(state, src_ip, event_ts, max_severity):
             new_alerts.extend(candidate_alerts)
             record_alert(state, src_ip, event_ts, max_severity)
+
+            # Phase 6: automatically block on HIGH-severity RULE alerts only
+            # (see responder.py for why z-score MEDIUM alerts don't trigger this)
+            for alert in candidate_alerts:
+                if alert["severity"] == "HIGH" and alert["triggering_method"] == "RULE":
+                    invoke_add_block(src_ip, reason=alert["alert_type"])
         else:
             print(f"  [dedup] suppressed repeat alert for {src_ip} "
                   f"(cooldown active, severity not higher)")

@@ -1,15 +1,24 @@
 """
-CLI/text dashboard (Phase 5 deliverable).
+CLI/text dashboard (Phase 5 deliverable, updated for Phase 6).
 
 Prints:
   1. Last 5 alerts
-  2. Current active blocks (populated once Phase 6 Lambda auto-block exists;
-     shows empty gracefully until then)
+  2. Current active blocks — now queries the Target Security Group directly
+     via boto3, so this reflects real auto-blocks created by the add-block
+     Lambda (Phase 6), not a placeholder file.
   3. Baseline statistics summary
 """
 
 import json
 import os
+from datetime import datetime, timezone
+
+import boto3
+
+from blocklist_utils import parse_description
+from config import AWS_REGION
+
+TARGET_SG_NAME = "target-sg"
 
 
 def load_last_n_alerts(alerts_file, n=5):
@@ -20,16 +29,45 @@ def load_last_n_alerts(alerts_file, n=5):
     return [json.loads(line) for line in lines[-n:]]
 
 
-def load_active_blocks(blocks_file="active_blocks.json"):
+def load_active_blocks():
     """
-    Phase 6's add-block Lambda will write/update this file (or an
-    equivalent Security-Group query) when it blocks an IP. Until Phase 6
-    is wired up, this simply returns an empty list rather than failing.
+    Queries the live Target Security Group and returns every ingress rule
+    that carries our auto-blocked tag AND hasn't expired yet. This is the
+    real Phase 6 state — no local file, no separate bookkeeping — the
+    Security Group itself is the single source of truth.
     """
-    if not os.path.exists(blocks_file):
+    try:
+        ec2 = boto3.client("ec2", region_name=AWS_REGION)
+        response = ec2.describe_security_groups(
+            Filters=[{"Name": "group-name", "Values": [TARGET_SG_NAME]}]
+        )
+        security_groups = response.get("SecurityGroups", [])
+        if not security_groups:
+            return []
+
+        sg = security_groups[0]
+        now = datetime.now(timezone.utc)
+        active = []
+
+        for perm in sg.get("IpPermissions", []):
+            for ip_range in perm.get("IpRanges", []):
+                parsed = parse_description(ip_range.get("Description"))
+                if parsed is None:
+                    continue  # not one of ours (e.g. your own management-IP rule)
+                if parsed["expiry"] > now:
+                    active.append({
+                        "ip": ip_range["CidrIp"],
+                        "expiry": parsed["expiry"].strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        "reason": parsed["reason"],
+                    })
+
+        return active
+
+    except Exception as e:
+        # Don't let a permissions hiccup or network blip crash the whole
+        # dashboard render — just show the section as unavailable this cycle.
+        print(f"  [dashboard] could not query active blocks: {e}")
         return []
-    with open(blocks_file, "r") as f:
-        return json.load(f)
 
 
 def print_dashboard(alerts_file="alerts.jsonl", baseline_file="baseline_profile.json"):
@@ -53,7 +91,7 @@ def print_dashboard(alerts_file="alerts.jsonl", baseline_file="baseline_profile.
     print("-" * 70)
     blocks = load_active_blocks()
     if not blocks:
-        print("  (none — Phase 6 automated response not yet integrated)")
+        print("  (none currently active)")
     else:
         for b in blocks:
             print(f"  {b['ip']:16} expires {b['expiry']}  reason={b['reason']}")
