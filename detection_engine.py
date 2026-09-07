@@ -8,7 +8,7 @@ from collections import defaultdict
 # CONFIGURATION
 # ============================================================
 
-FEATURES_FILE = "features_20260824_132034.json"  # <-- your file
+FEATURES_FILE = "features_20260824_132034.json"  # <-- features file
 BASELINE_FILE = "baseline_profile.json"
 ALERTS_FILE   = "alerts.jsonl"
 Z_THRESHOLD   = 4.0          # raised from 3.0: with log-transformed volume features
@@ -158,7 +158,7 @@ def rule_detect(fv):
                        f"connections={fv['total_connections']}")
         })
 
-    # --- ICMP Flood Rule (optional) ---
+    # --- ICMP Flood Rule  ---
     if (fv.get("primary_protocol") == 1 and
         fv.get("total_packets", 0) > 500):
         alerts.append({
@@ -172,7 +172,7 @@ def rule_detect(fv):
 
 
 # ============================================================
-# PHASE 5: DECISION FUSION & OUTPUT
+# DECISION FUSION & OUTPUT
 # ============================================================
 
 def run_detection():

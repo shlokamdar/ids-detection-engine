@@ -1,0 +1,87 @@
+#!/bin/bash
+# ============================================================
+# Phase 7: Mixed Traffic Test
+# Run this ON THE ATTACKER instance.
+#
+# Sequence: 10 min normal traffic -> 2 min attack -> 5 min normal traffic
+# Prints exact UTC timestamps at each phase boundary so you can build
+# ground_truth.json on the Detection-Server afterwards.
+#
+# Usage:
+#   chmod +x mixed_test.sh
+#   ./mixed_test.sh <target_private_ip>
+#
+# Example:
+#   ./mixed_test.sh 10.0.1.227
+# ============================================================
+
+set -e
+
+TARGET_IP="$1"
+if [ -z "$TARGET_IP" ]; then
+    echo "Usage: ./mixed_test.sh <target_private_ip>"
+    exit 1
+fi
+
+log_ts() {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%S+00:00)] $1"
+}
+
+echo "======================================================================"
+echo "Phase 7 Mixed Traffic Test — Target: $TARGET_IP"
+echo "======================================================================"
+log_ts "TEST_START"
+
+# ---------------- Phase A: 10 minutes of normal traffic ----------------
+log_ts "Starting 10 minutes of NORMAL traffic..."
+NORMAL_END=$((SECONDS + 600))
+while [ $SECONDS -lt $NORMAL_END ]; do
+    ping -c 1 -W 1 "$TARGET_IP" > /dev/null 2>&1 || true
+    curl -s -m 2 "http://$TARGET_IP" > /dev/null 2>&1 || true
+    sleep 5
+done
+log_ts "Finished normal traffic phase A."
+
+# ---------------- Phase B: 2 minutes of attack ----------------
+log_ts "ATTACK_START"
+
+log_ts "Running nmap port scan (1-1000)..."
+nmap -Pn -p 1-1000 "$TARGET_IP" || true
+
+log_ts "Running SSH brute-force simulation..."
+if command -v hydra >/dev/null 2>&1; then
+    # Requires a wordlist; falls back to a tiny inline list if rockyou.txt
+    # isn't present (it usually isn't on plain Ubuntu — that's fine, we
+    # only need failed-attempt TRAFFIC for detection, not a successful login).
+    if [ -f /usr/share/wordlists/rockyou.txt ]; then
+        WORDLIST=/usr/share/wordlists/rockyou.txt
+    else
+        WORDLIST=/tmp/small_wordlist.txt
+        printf "password\n123456\nadmin\nletmein\nqwerty\n" > "$WORDLIST"
+    fi
+    timeout 90 hydra -l admin -P "$WORDLIST" -t 4 "ssh://$TARGET_IP" || true
+else
+    log_ts "hydra not installed — falling back to a raw connection-attempt loop"
+    END=$((SECONDS + 90))
+    while [ $SECONDS -lt $END ]; do
+        (echo > /dev/tcp/$TARGET_IP/22) 2>/dev/null || true
+    done
+fi
+
+log_ts "ATTACK_END"
+
+# ---------------- Phase C: 5 minutes of normal traffic ----------------
+log_ts "Starting 5 minutes of NORMAL traffic..."
+NORMAL2_END=$((SECONDS + 300))
+while [ $SECONDS -lt $NORMAL2_END ]; do
+    ping -c 1 -W 1 "$TARGET_IP" > /dev/null 2>&1 || true
+    curl -s -m 2 "http://$TARGET_IP" > /dev/null 2>&1 || true
+    sleep 5
+done
+log_ts "Finished normal traffic phase C."
+
+log_ts "TEST_END"
+echo "======================================================================"
+echo "Test complete. Copy the TEST_START / ATTACK_START / ATTACK_END / TEST_END"
+echo "timestamps above into ground_truth.json on the Detection-Server."
+echo "======================================================================"

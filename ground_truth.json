@@ -1,0 +1,8 @@
+  {
+    "test_start": "2026-08-27T09:00:00+00:00",
+    "test_end":   "2026-08-27T09:20:00+00:00",
+    "attackers": [
+      {"attacker_ip": "10.0.1.194",  "attack_start": "...", "attack_end": "..."},
+      {"attacker_ip": "10.0.1.70", "attack_start": "...", "attack_end": "..."}
+    ]
+  }
