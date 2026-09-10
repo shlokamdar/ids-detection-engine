@@ -1,12 +1,14 @@
 """
-Web dashboard v4 — visual redesign.
+Web dashboard v5 — light theme, card-based redesign.
 
-Same data/logic as v3 (friendly_reason, scan_alerts_file, build_time_series
-all unchanged) — this pass only changes render_dashboard_html's HTML/CSS,
-moving away from the generic SaaS-dashboard look (near-black + 4 identical
-shadowed rounded cards + ALL-CAPS labels + pulsing status pill) toward a
-deliberate security-console aesthetic: monochrome by default, color
-reserved only for genuine danger states, monospace for tabular data.
+Visual direction explicitly requested: light background, white rounded
+cards with soft shadows, colored icon-badge KPI cards, donut chart with
+legend + table, pill-style status badges. Adapted from a referenced
+hotel-management dashboard's visual language into IDS/security data.
+
+Same underlying data functions as v4 (friendly_reason, scan_alerts_file,
+build_time_series unchanged) — this pass changes render_dashboard_html's
+HTML/CSS only.
 
 Run on the Detection-Server:
     python3 web_dashboard.py
@@ -45,10 +47,20 @@ FRIENDLY_FEATURE_NAMES = {
 ZSCORE_REASON_RE = re.compile(r"max_z_score=([\d.]+),\s*trigger=(\w+)")
 
 RULE_LABELS = {
-    "PORT_SCAN": "port scan",
+    "PORT_SCAN": "Port scan",
     "SSH_BRUTE_FORCE": "SSH brute force",
     "ICMP_FLOOD": "ICMP flood",
 }
+
+# --- Inline SVG icons (no external icon font dependency) ---
+ICON_BELL = '<path d="M12 3a5 5 0 0 0-5 5v3.2c0 .5-.2 1-.5 1.4L5 15h14l-1.5-2.4c-.3-.4-.5-.9-.5-1.4V8a5 5 0 0 0-5-5z"/><path d="M9.5 18a2.5 2.5 0 0 0 5 0"/>'
+ICON_WARNING = '<path d="M12 4 3 19h18L12 4z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/>'
+ICON_SHIELD = '<path d="M12 3 4 6v6c0 4.5 3 7.5 8 9 5-1.5 8-4.5 8-9V6l-8-3z"/>'
+ICON_CHECK = '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 10"/>'
+
+
+def icon_svg(path, size=20):
+    return f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{path}</svg>'
 
 
 def friendly_reason(alert):
@@ -57,11 +69,11 @@ def friendly_reason(alert):
         if match:
             z_value, feature = match.groups()
             label = FRIENDLY_FEATURE_NAMES.get(feature, feature.replace("_", " "))
-            return f"unusual {label} (z={float(z_value):.1f})"
-        return "unusual traffic pattern"
+            return f"Unusual {label} (z={float(z_value):.1f})"
+        return "Unusual traffic pattern"
     else:
         alert_type = alert.get("alert_type", "unknown")
-        return RULE_LABELS.get(alert_type, alert_type.replace("_", " ").lower())
+        return RULE_LABELS.get(alert_type, alert_type.replace("_", " ").title())
 
 
 def scan_alerts_file(alerts_file, time_bucket_minutes=10, time_window_hours=2):
@@ -124,232 +136,264 @@ def build_time_series(bucket_counts, window_start, now_utc, bucket_minutes=10):
 
 
 def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels, time_values, generated_at):
-    alert_rows = "".join(
-        f"<tr><td class='mono'>{a['timestamp']}</td><td class='mono'>{a['src_ip']}</td>"
-        f"<td>{friendly_reason(a)}</td>"
-        f"<td><span class='sev sev-{a['severity'].lower()}'>{a['severity'].lower()}</span></td>"
-        f"<td class='mono muted'>{a['triggering_method'].lower()}</td></tr>"
-        for a in reversed(alerts)
-    ) or "<tr><td colspan='5' class='empty'>No alerts recorded yet.</td></tr>"
-
     has_blocks = bool(blocks)
+    high_pct = (stats["high"] / stats["total"] * 100) if stats["total"] else 0
+
+    alert_rows = "".join(
+        f"<tr><td class='mono muted'>{a['timestamp']}</td><td class='mono'>{a['src_ip']}</td>"
+        f"<td>{friendly_reason(a)}</td>"
+        f"<td><span class='pill pill-{a['severity'].lower()}'>{a['severity'].title()}</span></td></tr>"
+        for a in reversed(alerts)
+    ) or "<tr><td colspan='4' class='empty'>No alerts recorded yet.</td></tr>"
+
     block_rows = "".join(
-        f"<tr><td class='mono'>{b['ip']}</td><td class='mono muted'>{b['expiry']}</td><td>{b['reason'].replace('_', ' ').lower()}</td></tr>"
+        f"<tr><td class='mono'>{b['ip']}</td><td class='mono muted'>{b['expiry']}</td>"
+        f"<td><span class='pill pill-high'>{b['reason'].replace('_', ' ').title()}</span></td></tr>"
         for b in blocks
-    ) or "<tr><td colspan='3' class='empty'>No active blocks. Nothing is currently contained.</td></tr>"
+    ) or "<tr><td colspan='3' class='empty'>No active blocks right now.</td></tr>"
 
     baseline_rows = "".join(
-        f"<tr><td>{feature.replace('_', ' ')}</td><td class='mono'>{s['mean']:.3f}</td><td class='mono muted'>{s['std']:.3f}</td></tr>"
+        f"<tr><td>{feature.replace('_', ' ').title()}</td><td class='mono'>{s['mean']:.3f}</td><td class='mono muted'>{s['std']:.3f}</td></tr>"
         for feature, s in baseline.items()
     ) or "<tr><td colspan='3' class='empty'>No baseline profile found.</td></tr>"
+
+    top_ip_rows = "".join(
+        f"<div class='ip-row'><span class='mono'>{ip}</span><span class='ip-count'>{count}</span></div>"
+        for ip, count in top_ips[:6]
+    ) or "<div class='empty'>No source data yet.</div>"
 
     top_ips_labels = json.dumps([ip for ip, _ in top_ips])
     top_ips_values = json.dumps([count for _, count in top_ips])
     time_labels_json = json.dumps(time_labels)
     time_values_json = json.dumps(time_values)
 
-    high_pct = (stats["high"] / stats["total"] * 100) if stats["total"] else 0
-    medium_pct = 100 - high_pct
-
     return f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>IDS Console</title>
+    <title>IDS Dashboard</title>
     <meta http-equiv="refresh" content="{REFRESH_SECONDS}">
     <meta charset="utf-8">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
     <style>
         :root {{
-            --bg: #0B0E13;
-            --surface: #12151C;
-            --border: #232833;
-            --border-strong: #2E3542;
-            --text: #E4E7EC;
-            --text-muted: #7C8697;
-            --text-faint: #4B5563;
-            --accent-alert: #FF6A39;
-            --accent-alert-dim: #3A2419;
-            --accent-calm: #4FD1C5;
+            --bg: #F4F5FA;
+            --card: #FFFFFF;
+            --border: #ECEDF3;
+            --text: #1F2430;
+            --text-muted: #8A8FA3;
+            --text-faint: #B7BBCB;
+            --orange: #FF6A45;
+            --orange-soft: #FFF0EB;
+            --blue: #4C6FFF;
+            --blue-soft: #EEF1FF;
+            --amber: #FFB020;
+            --amber-soft: #FFF6E5;
+            --green: #22C55E;
+            --green-soft: #E9FBF0;
+            --red: #EF4444;
+            --red-soft: #FDEAEA;
+            --shadow: 0 2px 10px rgba(31,36,48,0.05), 0 1px 2px rgba(31,36,48,0.04);
         }}
         * {{ box-sizing: border-box; }}
         body {{
-            font-family: 'IBM Plex Sans', sans-serif;
+            font-family: 'Inter', -apple-system, sans-serif;
             background: var(--bg); color: var(--text);
-            margin: 0; padding: 32px 40px; font-size: 14px;
+            margin: 0; padding: 28px 36px; font-size: 14px;
         }}
-        .mono {{ font-family: 'IBM Plex Mono', monospace; }}
+        .mono {{ font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; }}
         .muted {{ color: var(--text-muted); }}
-        .faint {{ color: var(--text-faint); }}
 
-        header {{
-            display: flex; justify-content: space-between; align-items: baseline;
-            padding-bottom: 20px; border-bottom: 1px solid var(--border);
-            margin-bottom: 0;
+        header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
+        .brand {{ display: flex; align-items: center; gap: 10px; }}
+        .brand-icon {{
+            width: 36px; height: 36px; border-radius: 10px; background: var(--orange);
+            display: flex; align-items: center; justify-content: center; color: white;
         }}
-        h1 {{ font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }}
-        .system-desc {{ color: var(--text-muted); font-size: 13px; margin-top: 3px; }}
-        .clock {{ font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--text-muted); text-align: right; }}
-        .clock .blink {{ animation: blink 1.4s step-start infinite; }}
-        @keyframes blink {{ 50% {{ opacity: 0.15; }} }}
+        h1 {{ font-size: 17px; font-weight: 700; margin: 0; }}
+        .brand-sub {{ font-size: 12px; color: var(--text-muted); }}
+        .status-badge {{
+            display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-muted);
+        }}
+        .live-dot {{ width: 7px; height: 7px; border-radius: 50%; background: var(--green); }}
 
-        .status-strip {{
-            display: grid; grid-template-columns: repeat(4, 1fr);
-            border-bottom: 1px solid var(--border); margin-bottom: 28px;
+        .kpi-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 20px; }}
+        .kpi-card {{
+            background: var(--card); border-radius: 14px; padding: 18px 20px;
+            box-shadow: var(--shadow);
         }}
-        .status-cell {{
-            padding: 18px 20px; border-right: 1px solid var(--border);
-        }}
-        .status-cell:last-child {{ border-right: none; }}
-        .status-cell .n {{ font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 500; }}
-        .status-cell .n.alert {{ color: var(--accent-alert); }}
-        .status-cell .label {{ color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }}
+        .kpi-top {{ display: flex; justify-content: space-between; align-items: flex-start; }}
+        .kpi-icon {{ width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }}
+        .kpi-icon.orange {{ background: var(--orange-soft); color: var(--orange); }}
+        .kpi-icon.red {{ background: var(--red-soft); color: var(--red); }}
+        .kpi-icon.blue {{ background: var(--blue-soft); color: var(--blue); }}
+        .kpi-icon.green {{ background: var(--green-soft); color: var(--green); }}
+        .kpi-value {{ font-size: 25px; font-weight: 700; margin-top: 12px; }}
+        .kpi-label {{ font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }}
+        .kpi-bar {{ height: 5px; border-radius: 3px; background: var(--border); margin-top: 12px; overflow: hidden; }}
+        .kpi-bar-fill {{ height: 100%; border-radius: 3px; }}
 
-        section {{ margin-bottom: 28px; }}
-        .section-title {{
-            font-size: 13px; color: var(--text-muted); font-weight: 500;
-            margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
-        }}
+        .row-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }}
+        .row-split {{ display: grid; grid-template-columns: 1fr 1.4fr; gap: 18px; margin-bottom: 18px; }}
 
-        .panel {{
-            border: 1px solid var(--border); border-radius: 3px; background: var(--surface);
+        .card {{ background: var(--card); border-radius: 14px; padding: 20px 22px; box-shadow: var(--shadow); }}
+        .card-title {{ font-size: 14.5px; font-weight: 600; margin-bottom: 4px; }}
+        .card-subtitle {{ font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }}
+
+        .ip-row {{
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 9px 0; border-bottom: 1px solid var(--border);
         }}
-        .panel.alert-border {{ border-color: var(--accent-alert); }}
+        .ip-row:last-child {{ border-bottom: none; }}
+        .ip-count {{
+            background: var(--orange-soft); color: var(--orange); font-weight: 600; font-size: 12px;
+            padding: 2px 9px; border-radius: 20px;
+        }}
 
         table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-        th {{
-            text-align: left; color: var(--text-faint); font-weight: 500; font-size: 12px;
-            padding: 10px 16px; border-bottom: 1px solid var(--border);
-        }}
-        td {{ padding: 9px 16px; border-bottom: 1px solid var(--border); }}
+        th {{ text-align: left; color: var(--text-faint); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; padding: 8px 10px; border-bottom: 1px solid var(--border); }}
+        td {{ padding: 10px; border-bottom: 1px solid var(--border); }}
         tr:last-child td {{ border-bottom: none; }}
-        .empty {{ color: var(--text-faint); padding: 18px 16px; }}
+        .empty {{ color: var(--text-faint); padding: 16px 10px; }}
 
-        .sev {{ font-size: 12px; }}
-        .sev-high {{ color: var(--accent-alert); font-weight: 600; }}
-        .sev-medium {{ color: var(--text-muted); }}
+        .pill {{ font-size: 11.5px; font-weight: 600; padding: 3px 11px; border-radius: 20px; }}
+        .pill-high {{ background: var(--red-soft); color: var(--red); }}
+        .pill-medium {{ background: var(--amber-soft); color: #B8760A; }}
 
-        .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
-        .split-col {{ display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }}
-        .chart-wrap {{ position: relative; height: 200px; padding: 16px; }}
+        .chart-wrap {{ position: relative; height: 190px; }}
+        .donut-wrap {{ display: flex; align-items: center; gap: 20px; }}
+        .donut-canvas {{ position: relative; width: 140px; height: 140px; flex-shrink: 0; }}
+        .donut-legend {{ flex: 1; }}
+        .legend-item {{ display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }}
+        .legend-dot {{ width: 10px; height: 10px; border-radius: 3px; }}
+        .legend-value {{ margin-left: auto; font-weight: 600; }}
 
-        .ratio-bar {{
-            display: flex; height: 8px; border-radius: 2px; overflow: hidden;
-            margin: 14px 16px 10px 16px; background: var(--border);
-        }}
-        .ratio-bar .seg-high {{ background: var(--accent-alert); }}
-        .ratio-bar .seg-medium {{ background: var(--accent-calm); opacity: 0.55; }}
-        .ratio-legend {{ display: flex; justify-content: space-between; padding: 0 16px 16px 16px; font-size: 12.5px; }}
-        .ratio-legend .dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }}
-
-        footer {{ color: var(--text-faint); font-size: 12px; padding-top: 16px; }}
+        footer {{ color: var(--text-faint); font-size: 12px; margin-top: 8px; text-align: center; }}
     </style>
 </head>
 <body>
     <header>
-        <div>
-            <h1>IDS Console</h1>
-            <div class="system-desc">Monitoring traffic across the attacker, target and detection instances</div>
+        <div class="brand">
+            <div class="brand-icon">{icon_svg(ICON_SHIELD, 20)}</div>
+            <div>
+                <h1>IDS Dashboard</h1>
+                <div class="brand-sub">Attacker, target and detection instance monitoring</div>
+            </div>
         </div>
-        <div class="clock">{generated_at.replace(':', '<span class="blink">:</span>', 1)}<br><span class="faint">refreshes every {REFRESH_SECONDS}s</span></div>
+        <div class="status-badge"><span class="live-dot"></span>Updated {generated_at} &middot; refreshes every {REFRESH_SECONDS}s</div>
     </header>
 
-    <div class="status-strip">
-        <div class="status-cell">
-            <div class="n">{stats['total']:,}</div>
-            <div class="label">alerts recorded</div>
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-top">
+                <div class="kpi-icon orange">{icon_svg(ICON_BELL)}</div>
+            </div>
+            <div class="kpi-value">{stats['total']:,}</div>
+            <div class="kpi-label">Total alerts</div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%;background:var(--orange)"></div></div>
         </div>
-        <div class="status-cell">
-            <div class="n {'alert' if stats['high'] else ''}">{stats['high']}</div>
-            <div class="label">high severity</div>
+        <div class="kpi-card">
+            <div class="kpi-top">
+                <div class="kpi-icon red">{icon_svg(ICON_WARNING)}</div>
+            </div>
+            <div class="kpi-value">{stats['high']}</div>
+            <div class="kpi-label">High severity</div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:{max(high_pct, 3)}%;background:var(--red)"></div></div>
         </div>
-        <div class="status-cell">
-            <div class="n {'alert' if blocks else ''}">{len(blocks)}</div>
-            <div class="label">active block{'s' if len(blocks) != 1 else ''}</div>
+        <div class="kpi-card">
+            <div class="kpi-top">
+                <div class="kpi-icon blue">{icon_svg(ICON_SHIELD)}</div>
+            </div>
+            <div class="kpi-value">{len(blocks)}</div>
+            <div class="kpi-label">Active block{'s' if len(blocks) != 1 else ''}</div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:{'100' if blocks else '4'}%;background:var(--blue)"></div></div>
         </div>
-        <div class="status-cell">
-            <div class="n">{stats['rule']}</div>
-            <div class="label">rule-based catches</div>
+        <div class="kpi-card">
+            <div class="kpi-top">
+                <div class="kpi-icon green">{icon_svg(ICON_CHECK)}</div>
+            </div>
+            <div class="kpi-value">{stats['rule']}</div>
+            <div class="kpi-label">Rule-based catches</div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%;background:var(--green)"></div></div>
         </div>
     </div>
 
-    <section>
-        <div class="section-title">Active blocks</div>
-        <div class="panel {'alert-border' if has_blocks else ''}">
+    <div class="row-2">
+        <div class="card">
+            <div class="card-title">Active blocks</div>
+            <div class="card-subtitle">Automatically contained by the response engine</div>
             <table>
-                <tr><th>address</th><th>expires</th><th>reason</th></tr>
+                <tr><th>Address</th><th>Expires</th><th>Reason</th></tr>
                 {block_rows}
             </table>
         </div>
-    </section>
-
-    <div class="two-col">
-        <section>
-            <div class="section-title">Alert volume, last 2 hours</div>
-            <div class="panel"><div class="chart-wrap"><canvas id="timeChart"></canvas></div></div>
-        </section>
-        <section>
-            <div class="section-title">Top sources</div>
-            <div class="panel"><div class="chart-wrap"><canvas id="topIpsChart"></canvas></div></div>
-        </section>
+        <div class="card">
+            <div class="card-title">Top sources</div>
+            <div class="card-subtitle">Most frequent alert origins</div>
+            {top_ip_rows}
+        </div>
     </div>
 
-    <div class="split-col">
-        <section>
-            <div class="section-title">Recent activity</div>
-            <div class="panel">
-                <table>
-                    <tr><th>time</th><th>source</th><th>what happened</th><th>severity</th><th>method</th></tr>
-                    {alert_rows}
-                </table>
-            </div>
-        </section>
-
-        <section>
-            <div class="section-title">Detection mix</div>
-            <div class="panel">
-                <div class="ratio-bar">
-                    <div class="seg-high" style="width:{high_pct}%"></div>
-                    <div class="seg-medium" style="width:{medium_pct}%"></div>
-                </div>
-                <div class="ratio-legend">
-                    <span><span class="dot" style="background:var(--accent-alert)"></span>rule-based: {stats['high']}</span>
-                    <span class="muted"><span class="dot" style="background:var(--accent-calm);opacity:.55"></span>z-score: {stats['medium']}</span>
+    <div class="row-split">
+        <div class="card">
+            <div class="card-title">Detection breakdown</div>
+            <div class="card-subtitle">Rule-based vs. statistical</div>
+            <div class="donut-wrap">
+                <div class="donut-canvas"><canvas id="donutChart"></canvas></div>
+                <div class="donut-legend">
+                    <div class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>Rule-based<span class="legend-value">{stats['high']}</span></div>
+                    <div class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span>Z-score<span class="legend-value">{stats['medium']}</span></div>
                 </div>
             </div>
-        </section>
+        </div>
+        <div class="card">
+            <div class="card-title">Alert volume, last 2 hours</div>
+            <div class="card-subtitle">Alerts recorded per 10-minute window</div>
+            <div class="chart-wrap"><canvas id="timeChart"></canvas></div>
+        </div>
     </div>
 
-    <section>
-        <div class="section-title">Baseline profile</div>
-        <div class="panel">
+    <div class="row-2">
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-title">Recent alerts</div>
+            <div class="card-subtitle">Last 10 detections across all sources</div>
             <table>
-                <tr><th>feature</th><th>mean</th><th>std dev</th></tr>
-                {baseline_rows}
+                <tr><th>Time</th><th>Source</th><th>What happened</th><th>Severity</th></tr>
+                {alert_rows}
             </table>
         </div>
-    </section>
+    </div>
 
-    <footer>Detection engine baseline built from 45–60 minutes of captured normal traffic. Z-score threshold: 4.0σ.</footer>
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-title">Baseline profile</div>
+        <div class="card-subtitle">Learned from 45&ndash;60 minutes of normal traffic &middot; Z-score threshold 4.0&sigma;</div>
+        <table>
+            <tr><th>Feature</th><th>Mean</th><th>Std dev</th></tr>
+            {baseline_rows}
+        </table>
+    </div>
+
+    <footer>IDS Dashboard &middot; auto-refreshing view, no action required</footer>
 
     <script>
-        Chart.defaults.font.family = "'IBM Plex Mono', monospace";
-        Chart.defaults.color = '#7C8697';
+        Chart.defaults.font.family = "'Inter', sans-serif";
+        Chart.defaults.color = '#8A8FA3';
 
-        new Chart(document.getElementById('topIpsChart'), {{
-            type: 'bar',
+        new Chart(document.getElementById('donutChart'), {{
+            type: 'doughnut',
             data: {{
-                labels: {top_ips_labels},
-                datasets: [{{ data: {top_ips_values}, backgroundColor: '#2E3542', borderRadius: 2 }}]
+                labels: ['Rule-based', 'Z-score'],
+                datasets: [{{
+                    data: [{stats['high']}, {stats['medium']}],
+                    backgroundColor: ['#EF4444', '#FFB020'],
+                    borderColor: '#FFFFFF',
+                    borderWidth: 3
+                }}]
             }},
             options: {{
-                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-                plugins: {{ legend: {{ display: false }} }},
-                scales: {{
-                    x: {{ ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: '#1A1E27' }} }},
-                    y: {{ ticks: {{ font: {{ size: 10 }} }}, grid: {{ display: false }} }}
-                }}
+                responsive: true, maintainAspectRatio: false, cutout: '70%',
+                plugins: {{ legend: {{ display: false }} }}
             }}
         }});
 
@@ -359,8 +403,8 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
                 labels: {time_labels_json},
                 datasets: [{{
                     data: {time_values_json},
-                    borderColor: '#4FD1C5', backgroundColor: 'rgba(79,209,197,0.06)',
-                    fill: true, tension: 0.25, pointRadius: 0, borderWidth: 1.5
+                    borderColor: '#4C6FFF', backgroundColor: 'rgba(76,111,255,0.06)',
+                    fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2
                 }}]
             }},
             options: {{
@@ -368,7 +412,7 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
                 plugins: {{ legend: {{ display: false }} }},
                 scales: {{
                     x: {{ ticks: {{ maxTicksLimit: 7, font: {{ size: 10 }} }}, grid: {{ display: false }} }},
-                    y: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: '#1A1E27' }} }}
+                    y: {{ beginAtZero: true, ticks: {{ font: {{ size: 10 }} }}, grid: {{ color: '#F0F1F6' }} }}
                 }}
             }}
         }});
