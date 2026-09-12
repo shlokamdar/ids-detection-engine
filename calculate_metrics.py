@@ -72,16 +72,31 @@ def load_ground_truth():
     return {"test_start": test_start, "test_end": test_end, "attackers": attackers}
 
 
-def load_decision_log():
+def load_decision_log_in_window(test_start, test_end):
+    """
+    Reads decision_log.jsonl ONE LINE AT A TIME and keeps only entries
+    within [test_start, test_end]. This file is written to on every
+    cron cycle (every window examined, not just alerts), so after weeks
+    of running it can be far too large to fit in memory as a fully
+    parsed list — loading it all first (the old approach) caused an
+    out-of-memory kill on a t3.micro. Filtering during the read instead
+    means memory use stays proportional to your ~20-minute test window,
+    not the whole multi-week file.
+    """
     entries = []
     with open(DECISION_LOG_FILE, "r") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            row = json.loads(line)
-            row["window_dt"] = datetime.fromtimestamp(row["window_start"], tz=timezone.utc)
-            entries.append(row)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            window_dt = datetime.fromtimestamp(row["window_start"], tz=timezone.utc)
+            if test_start <= window_dt <= test_end:
+                row["window_dt"] = window_dt
+                entries.append(row)
     return entries
 
 
@@ -94,9 +109,7 @@ def is_attack_window(entry, attackers):
 
 def calculate_metrics():
     gt = load_ground_truth()
-    all_entries = load_decision_log()
-
-    entries = [e for e in all_entries if gt["test_start"] <= e["window_dt"] <= gt["test_end"]]
+    entries = load_decision_log_in_window(gt["test_start"], gt["test_end"])
 
     if not entries:
         print("No decision_log.jsonl entries found within the test window.")
