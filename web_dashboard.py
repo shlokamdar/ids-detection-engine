@@ -332,17 +332,10 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
         </div>
     </div>
 
-    <div class="row-split">
-        <div class="card">
-            <div class="card-title">Detection breakdown</div>
-            <div class="card-subtitle">Rule-based vs. statistical &middot; log scale, since one is typically far rarer than the other</div>
-            <div class="chart-wrap" style="height:130px;"><canvas id="breakdownChart"></canvas></div>
-        </div>
-        <div class="card">
-            <div class="card-title">Alert volume, last 2 hours</div>
-            <div class="card-subtitle">Alerts recorded per 10-minute window</div>
-            <div class="chart-wrap"><canvas id="timeChart"></canvas></div>
-        </div>
+    <div class="card" style="margin-bottom: 18px;">
+        <div class="card-title">Alert volume, last 2 hours</div>
+        <div class="card-subtitle">Alerts recorded per 10-minute window &mdash; a real attack shows as a distinct spike above the ambient baseline</div>
+        <div class="chart-wrap"><canvas id="timeChart"></canvas></div>
     </div>
 
     <div class="row-2">
@@ -370,74 +363,6 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
     <script>
         Chart.defaults.font.family = "'Inter', sans-serif";
         Chart.defaults.color = '#8A8FA3';
-
-        // Print the real counts directly on each bar, since a log-scale
-        // axis makes relative bar length visually misleading if someone
-        // reads it like a linear chart — the printed number is the source
-        // of truth, the bar is just there to show "meaningfully different
-        // orders of magnitude," not exact proportion.
-        // Scoped to THIS chart only (via the plugins array below), not
-        // registered globally — a line chart's points also have x/y
-        // properties, so a global plugin would draw spurious labels on
-        // the time-series chart too.
-        const barValueLabelsPlugin = {{
-            id: 'barValueLabels',
-            afterDatasetsDraw(chart) {{
-                const {{ ctx }} = chart;
-                chart.data.datasets[0].data.forEach((value, i) => {{
-                    const meta = chart.getDatasetMeta(0);
-                    const bar = meta.data[i];
-                    ctx.save();
-                    ctx.fillStyle = '#1F2430';
-                    ctx.font = "600 12px 'IBM Plex Mono', monospace";
-                    ctx.textAlign = 'left';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(value.toLocaleString(), bar.x + 8, bar.y);
-                    ctx.restore();
-                }});
-            }}
-        }};
-
-        new Chart(document.getElementById('breakdownChart'), {{
-            type: 'bar',
-            plugins: [barValueLabelsPlugin],
-            data: {{
-                labels: ['Rule-based', 'Z-score'],
-                datasets: [{{
-                    data: [{stats['high']}, {stats['medium']}],
-                    backgroundColor: ['#EF4444', '#FFB020'],
-                    borderRadius: 4,
-                    barThickness: 28
-                }}]
-            }},
-            options: {{
-                indexAxis: 'y',
-                responsive: true, maintainAspectRatio: false,
-                plugins: {{
-                    legend: {{ display: false }},
-                    tooltip: {{
-                        callbacks: {{
-                            label: (ctx) => ctx.parsed.x.toLocaleString() + ' alerts'
-                        }}
-                    }}
-                }},
-                scales: {{
-                    x: {{
-                        type: 'logarithmic',
-                        min: 1,
-                        ticks: {{
-                            font: {{ size: 10 }},
-                            callback: (val) => {{
-                                const log = Math.log10(val);
-                                return Number.isInteger(log) ? val.toLocaleString() : '';
-                            }}
-                        }},
-                        grid: {{ color: '#F0F1F6' }}
-                    }},
-                    y: {{ ticks: {{ font: {{ size: 12 }}, color: '#1F2430' }}, grid: {{ display: false }} }}
-                }}
-            }}
-        }});
 
         new Chart(document.getElementById('timeChart'), {{
             type: 'line',
