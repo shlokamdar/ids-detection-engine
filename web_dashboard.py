@@ -53,7 +53,7 @@ RULE_LABELS = {
 }
 
 # --- Inline SVG icons (no external icon font dependency) ---
-ICON_BELL = '<path d="M12 3a5 5 0 0 0-5 5v3.2c0 .5-.2 1-.5 1.4L5 15h14l-1.5-2.4c-.3-.4-.5-.9-.5-1.4V8a5 5 0 0 0-5-5z"/><path d="M9.5 18a2.5 2.5 0 0 0 5 0"/>'
+ICON_NODES = '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.3 10.5 16"/><path d="M15.8 7.3 13.5 16"/><path d="M8.3 6h7.4"/>'
 ICON_WARNING = '<path d="M12 4 3 19h18L12 4z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/>'
 ICON_SHIELD = '<path d="M12 3 4 6v6c0 4.5 3 7.5 8 9 5-1.5 8-4.5 8-9V6l-8-3z"/>'
 ICON_CHECK = '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 10"/>'
@@ -135,7 +135,7 @@ def build_time_series(bucket_counts, window_start, now_utc, bucket_minutes=10):
     return labels, values
 
 
-def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels, time_values, generated_at):
+def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, unique_ip_count, time_labels, time_values, generated_at):
     has_blocks = bool(blocks)
     high_pct = (stats["high"] / stats["total"] * 100) if stats["total"] else 0
 
@@ -284,11 +284,11 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
     <div class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-top">
-                <div class="kpi-icon orange">{icon_svg(ICON_BELL)}</div>
+                <div class="kpi-icon blue">{icon_svg(ICON_NODES)}</div>
             </div>
-            <div class="kpi-value">{stats['total']:,}</div>
-            <div class="kpi-label">Total alerts</div>
-            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%;background:var(--orange)"></div></div>
+            <div class="kpi-value">{unique_ip_count:,}</div>
+            <div class="kpi-label">Unique sources seen</div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%;background:var(--blue)"></div></div>
         </div>
         <div class="kpi-card">
             <div class="kpi-top">
@@ -395,6 +395,7 @@ def index():
 
     stats, ip_counts, bucket_counts, window_start, now_utc = scan_alerts_file(ALERTS_FILE)
     top_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+    unique_ip_count = len(ip_counts)
     time_labels, time_values = build_time_series(bucket_counts, window_start, now_utc)
 
     baseline = {}
@@ -403,7 +404,7 @@ def index():
             baseline = json.load(f)
 
     generated_at = utc_dt_to_ist(datetime.now(timezone.utc))
-    return render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels, time_values, generated_at)
+    return render_dashboard_html(alerts, blocks, baseline, stats, top_ips, unique_ip_count, time_labels, time_values, generated_at)
 
 
 if __name__ == "__main__":
