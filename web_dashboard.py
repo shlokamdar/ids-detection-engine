@@ -262,9 +262,6 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
         .pill-medium {{ background: var(--amber-soft); color: #B8760A; }}
 
         .chart-wrap {{ position: relative; height: 190px; }}
-        .donut-wrap {{ display: flex; align-items: center; gap: 20px; }}
-        .donut-canvas {{ position: relative; width: 140px; height: 140px; flex-shrink: 0; }}
-        .donut-legend {{ flex: 1; }}
         .legend-item {{ display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }}
         .legend-dot {{ width: 10px; height: 10px; border-radius: 3px; }}
         .legend-value {{ margin-left: auto; font-weight: 600; }}
@@ -338,14 +335,8 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
     <div class="row-split">
         <div class="card">
             <div class="card-title">Detection breakdown</div>
-            <div class="card-subtitle">Rule-based vs. statistical</div>
-            <div class="donut-wrap">
-                <div class="donut-canvas"><canvas id="donutChart"></canvas></div>
-                <div class="donut-legend">
-                    <div class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>Rule-based<span class="legend-value">{stats['high']}</span></div>
-                    <div class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span>Z-score<span class="legend-value">{stats['medium']}</span></div>
-                </div>
-            </div>
+            <div class="card-subtitle">Rule-based vs. statistical &middot; log scale, since one is typically far rarer than the other</div>
+            <div class="chart-wrap" style="height:130px;"><canvas id="breakdownChart"></canvas></div>
         </div>
         <div class="card">
             <div class="card-title">Alert volume, last 2 hours</div>
@@ -380,20 +371,71 @@ def render_dashboard_html(alerts, blocks, baseline, stats, top_ips, time_labels,
         Chart.defaults.font.family = "'Inter', sans-serif";
         Chart.defaults.color = '#8A8FA3';
 
-        new Chart(document.getElementById('donutChart'), {{
-            type: 'doughnut',
+        // Print the real counts directly on each bar, since a log-scale
+        // axis makes relative bar length visually misleading if someone
+        // reads it like a linear chart — the printed number is the source
+        // of truth, the bar is just there to show "meaningfully different
+        // orders of magnitude," not exact proportion.
+        // Scoped to THIS chart only (via the plugins array below), not
+        // registered globally — a line chart's points also have x/y
+        // properties, so a global plugin would draw spurious labels on
+        // the time-series chart too.
+        const barValueLabelsPlugin = {{
+            id: 'barValueLabels',
+            afterDatasetsDraw(chart) {{
+                const {{ ctx }} = chart;
+                chart.data.datasets[0].data.forEach((value, i) => {{
+                    const meta = chart.getDatasetMeta(0);
+                    const bar = meta.data[i];
+                    ctx.save();
+                    ctx.fillStyle = '#1F2430';
+                    ctx.font = "600 12px 'IBM Plex Mono', monospace";
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(value.toLocaleString(), bar.x + 8, bar.y);
+                    ctx.restore();
+                }});
+            }}
+        }};
+
+        new Chart(document.getElementById('breakdownChart'), {{
+            type: 'bar',
+            plugins: [barValueLabelsPlugin],
             data: {{
                 labels: ['Rule-based', 'Z-score'],
                 datasets: [{{
                     data: [{stats['high']}, {stats['medium']}],
                     backgroundColor: ['#EF4444', '#FFB020'],
-                    borderColor: '#FFFFFF',
-                    borderWidth: 3
+                    borderRadius: 4,
+                    barThickness: 28
                 }}]
             }},
             options: {{
-                responsive: true, maintainAspectRatio: false, cutout: '70%',
-                plugins: {{ legend: {{ display: false }} }}
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false,
+                plugins: {{
+                    legend: {{ display: false }},
+                    tooltip: {{
+                        callbacks: {{
+                            label: (ctx) => ctx.parsed.x.toLocaleString() + ' alerts'
+                        }}
+                    }}
+                }},
+                scales: {{
+                    x: {{
+                        type: 'logarithmic',
+                        min: 1,
+                        ticks: {{
+                            font: {{ size: 10 }},
+                            callback: (val) => {{
+                                const log = Math.log10(val);
+                                return Number.isInteger(log) ? val.toLocaleString() : '';
+                            }}
+                        }},
+                        grid: {{ color: '#F0F1F6' }}
+                    }},
+                    y: {{ ticks: {{ font: {{ size: 12 }}, color: '#1F2430' }}, grid: {{ display: false }} }}
+                }}
             }}
         }});
 
